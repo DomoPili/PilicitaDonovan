@@ -1,6 +1,6 @@
 """
 Archivo: scrape_followers.py (PRINCIPAL)
-Descripción: Orquestador principal del scraping
+Descripción: Orquestador principal del scraping (exposición posts_to_extract)
 """
 
 from browser import init_browser
@@ -48,6 +48,8 @@ def main():
         print("\n" + "="*60)
         profile = input("👤 Ingresa el username objetivo: ").strip()
         limit = int(input("🔢 Límite de seguidores a scrapear: "))
+        posts_to_extract = int(input("🖼️ ¿Cuántos captions por perfil extraer? (recomendado 1-3): ") or 3)
+        posts_to_extract = max(0, min(posts_to_extract, 5))  # limitar entre 0 y 5
         
         # Scraping de followers
         print("\n" + "="*60)
@@ -66,7 +68,7 @@ def main():
         print("\n" + "="*60)
         print("FASE 2: RECOPILACIÓN DE DATOS")
         print("="*60)
-        followers_data = collect_followers_data(driver, followers, max_profiles=limit)
+        followers_data = collect_followers_data(driver, followers, max_profiles=limit, posts_to_extract=posts_to_extract)
         
         # Guardar datos JSON
         json_file = save_followers_data_json(followers_data, profile)
