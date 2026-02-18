@@ -1,6 +1,6 @@
 """
 Archivo: benford_analysis.py
-Descripción: Análisis de la Ley de Benford (incluye bio y captions en el Excel)
+Descripción: Análisis de la Ley de Benford (incluye name, following, bio y captions en el Excel)
 """
 
 import json
@@ -46,37 +46,58 @@ def primer_digito_valor(valor):
 
 def analizar_benford(json_file, profile):
     """
-    Analiza datos con la Ley de Benford y genera gráfica
+    Analiza datos con la Ley de Benford y genera gráfica y Excel detallado
     """
     print("\n" + "=" * 60)
     print("📊 ANÁLISIS LEY DE BENFORD")
     print("=" * 60)
 
-    df = cargar_json_instagram(json_file)
+    try:
+        df = cargar_json_instagram(json_file)
+    except Exception as e:
+        print(f"❌ Error cargando JSON: {e}")
+        return None
 
-    possible_cols = [c for c in df.columns if "follow" in c.lower()]
+    possible_cols = [c for c in df.columns if "follow" in c.lower() and "ing" not in c.lower()]
+    # Buscamos "followers" pero excluimos "following" para detectar la columna principal
+    if not possible_cols:
+        # Fallback por si la columna se llama diferente pero contiene números
+        possible_cols = [c for c in df.columns if "follow" in c.lower()]
+
     if not possible_cols:
         print("⚠️ No se encontró columna de followers")
         return None
-    follow_col = possible_cols[0]
+    
+    # Usamos 'followers' como la columna de análisis
+    follow_col = 'followers' if 'followers' in df.columns else possible_cols[0]
 
-    # Preparar df_clean con columnas adicionales
+    # --- CONSTRUCCIÓN DEL DATAFRAME LIMPIO PARA EL EXCEL ---
     df_clean = pd.DataFrame()
+    
+    # 1. Username
     if 'username' in df.columns:
         df_clean["username"] = df["username"].astype(str)
     else:
         df_clean["username"] = df[df.columns[0]].astype(str)
 
+    # 2. Name (Nombre real) - [NUEVO]
+    df_clean["name"] = df["name"] if "name" in df.columns else None
+
+    # 3. Followers (Seguidores)
     df_clean["followers"] = df[follow_col]
 
-    # bio
+    # 4. Following (Seguidos) - [NUEVO]
+    df_clean["following"] = df["following"] if "following" in df.columns else None
+
+    # 5. Bio
     df_clean["bio"] = df["bio"] if "bio" in df.columns else None
 
-    # recent_captions -> join list to single cell for Excel (separator " | ")
+    # 6. Recent Captions (formateado)
     if "recent_captions" in df.columns:
         def join_captions(x):
             if isinstance(x, list):
-                return " | ".join([str(i) for i in x if i is not None and str(i).strip() != ""])
+                # Une los textos con una barra vertical para que quepan en una celda de Excel
+                return " | ".join([str(i).replace('\n', ' ').strip() for i in x if i is not None and str(i).strip() != ""])
             elif pd.isna(x):
                 return None
             elif isinstance(x, str):
@@ -86,9 +107,10 @@ def analizar_benford(json_file, profile):
     else:
         df_clean["recent_captions"] = None
 
+    # Calculamos el primer dígito para Benford (basado en followers)
     df_clean["primer_digito"] = df_clean["followers"].apply(primer_digito_valor)
 
-    # Benford
+    # --- CÁLCULO DE BENFORD ---
     digitos = np.arange(1, 10)
     conteos = df_clean["primer_digito"].value_counts().reindex(digitos, fill_value=0)
     total_validos = conteos.sum()
@@ -108,28 +130,52 @@ def analizar_benford(json_file, profile):
         "Diferencia_%": (porcentaje_real - porcentaje_benford).round(3)
     })
 
-    # Guardar Excel
+    # --- GUARDAR EXCEL ---
     excel_file = RESULTS_DIR / f"benford_{profile}.xlsx"
+    
+    # Ordenar columnas para que se vean bien en el Excel
+    column_order = ["username", "name", "followers", "following", "primer_digito", "bio", "recent_captions"]
+    # Asegurarnos de que solo pedimos columnas que existen
+    final_cols = [c for c in column_order if c in df_clean.columns]
+    
     with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
-        df_clean.to_excel(writer, sheet_name="followers_completo", index=False)
+        df_clean[final_cols].to_excel(writer, sheet_name="followers_completo", index=False)
         comparacion.to_excel(writer, sheet_name="comparacion_benford", index=False)
+
+        # Ajuste de ancho de columnas (cosmético para el profe)
+        worksheet = writer.sheets['followers_completo']
+        worksheet.column_dimensions['A'].width = 20  # Username
+        worksheet.column_dimensions['B'].width = 25  # Name
+        worksheet.column_dimensions['C'].width = 15  # Followers
+        worksheet.column_dimensions['D'].width = 15  # Following
+        worksheet.column_dimensions['F'].width = 40  # Bio
+        worksheet.column_dimensions['G'].width = 50  # Captions
 
     print(f"✅ Excel generado: {excel_file}")
 
-    # Gráfica
+    # --- GENERAR GRÁFICA ---
     png_file = RESULTS_DIR / f"benford_{profile}.png"
     fig, ax = plt.subplots(figsize=(10, 6))
 
     bar_width = 0.35
-    ax.bar(digitos - bar_width/2, comparacion["Frecuencia_Real_%"], width=bar_width, label="Datos Reales (%)", alpha=0.85)
-    ax.plot(digitos, comparacion["Benford_%"], marker="o", linewidth=2, label="Ley de Benford (%)")
+    ax.bar(digitos - bar_width/2, comparacion["Frecuencia_Real_%"], width=bar_width, label="Datos Reales (%)", alpha=0.85, color='#4CAF50')
+    ax.plot(digitos, comparacion["Benford_%"], marker="o", linewidth=2, label="Ley de Benford (%)", color='#FF5722')
 
     ax.set_title(f"Ley de Benford - @{profile}", fontsize=14, fontweight='bold')
-    ax.set_xlabel("Primer dígito", fontsize=12)
+    ax.set_xlabel("Primer dígito (Followers)", fontsize=12)
     ax.set_ylabel("Frecuencia (%)", fontsize=12)
     ax.set_xticks(digitos)
     ax.grid(alpha=0.3, linestyle='--')
     ax.legend(fontsize=10)
+
+    # Añadir tabla pequeña con estadísticas en la gráfica
+    stats_text = (
+        f"Total Muestras: {total_validos}\n"
+        f"Promedio Followers: {df_clean['followers'].mean():.0f}"
+    )
+    plt.text(0.95, 0.95, stats_text, transform=ax.transAxes, fontsize=9,
+             verticalalignment='top', horizontalalignment='right',
+             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
     plt.tight_layout()
     fig.savefig(png_file, dpi=300, bbox_inches="tight")
